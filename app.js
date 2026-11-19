@@ -352,8 +352,53 @@ $$('[data-back]').forEach(b=>b.addEventListener('click',()=>{
 }));
 
 /* ---------- 启动页 ---------- */
-$('#view-splash').addEventListener('click',()=>showView(state.me?'home':'login'));
-setTimeout(()=>{if(state.view==='splash')showView(state.me?'home':'login');},3000);
+if(GUEST_MODE){
+  const hint=document.querySelector('#view-splash .tap-hint');
+  if(hint)hint.textContent='正在为你准备账号…';
+  $('#view-splash').addEventListener('click',()=>{if(!state.me)autoGuest();});
+  setTimeout(()=>{if(state.view==='splash'&&!state.me)autoGuest();},1500);
+}else{
+  $('#view-splash').addEventListener('click',()=>showView(state.me?'home':'login'));
+  setTimeout(()=>{if(state.view==='splash')showView(state.me?'home':'login');},3000);
+}
+/* ---------- 访客模式：自动分配 1~10 号账号 ---------- */
+async function autoGuest(){
+  if(state.me||state.view!=='splash')return;
+  const hint=document.querySelector('#view-splash .tap-hint');
+  const ok=await waitNet(10000);
+  if(!mq||!mq.connected){
+    if(hint)hint.textContent='网络较慢，正在重试…';
+    setTimeout(()=>{if(state.view==='splash'&&!state.me)autoGuest();},2000);
+    return;
+  }
+  /* 等总线上的注册表（保留消息）到达，避免误判占用 */
+  await new Promise(r=>setTimeout(r,2200));
+  if(state.me||state.view!=='splash')return;
+  let pick=null;
+  for(let i=1;i<=10;i++){if(!state.users[String(i)]){pick=String(i);break;}}
+  if(pick){
+    /* 空闲号码：注册新访客账号（注册前再核对一次，避免覆盖晚到的注册表） */
+    if(state.users[pick]){guestLogin(pick,state.users[pick].pass);return;}
+    const pass='g'+Math.random().toString(36).slice(2,10);
+    const h=await hash(pass);
+    if(state.users[pick]){guestLogin(pick,state.users[pick].pass);return;}
+    pub(NS+'users/'+encodeURIComponent(pick),{pass:h,ts:Date.now()},true);
+    state.users[pick]={pass:h,ts:Date.now()};
+    guestLogin(pick,h,'已为你分配账号 '+pick);
+  }else{
+    /* 1~10 全部占用：随机借用一个（不改动其数据） */
+    const name=String(1+Math.floor(Math.random()*10));
+    guestLogin(name,(state.users[name]||{}).pass||'','已进入访客账号 '+name);
+  }
+}
+function guestLogin(name,passHash,tip){
+  if(!passHash)return;
+  state.me={name,pass:passHash};
+  setStore('me',state.me);
+  if(tip)toast(tip+' 🦢');
+  afterLogin();
+  showView('home');
+}
 
 /* ---------- 登录 ---------- */
 async function doLogin(){
@@ -956,9 +1001,12 @@ function renderProfile(){
   $('#moReply').textContent=ar?(ar<60000?Math.max(1,Math.round(ar/1000))+' 秒':Math.round(ar/60000)+' 分钟'):'–';
 }
 /* ---------- 版本公告 ---------- */
-const APP_VERSION='v4.7';
+const APP_VERSION='v4.8';
+/* 访客模式开关：true=隐藏登录页，自动分配 1~10 号账号；false=还原正常登录 */
+const GUEST_MODE=true;
 const CHANGELOG=[
-  {v:'v4.7',d:'11-19',cur:true,t:'商品多图滑动浏览；买卖双方快捷语区分；聊天时间分隔（10 分钟规则）；全新闲鹅开屏图标'},
+  {v:'v4.8',d:'11-19',cur:true,t:'访客模式：打开即用，自动分配 1~10 号体验账号，无需注册登录'},
+  {v:'v4.7',d:'11-19',t:'商品多图滑动浏览；买卖双方快捷语区分；聊天时间分隔（10 分钟规则）；全新闲鹅开屏图标'},
   {v:'v4.6',d:'11-19',t:'历史数据恢复：商品/聊天跨节点补齐，登录后自动再取一次历史消息'},
   {v:'v4.5',d:'11-19',t:'跨节点数据同步：所有数据镜像写入三个总线节点，历史数据不因连接节点切换而丢失'},
   {v:'v4.4',d:'11-18',t:'聊天新增闲鹅表情包（5 款）；移除遮挡按键的 Open Sandbox 悬浮按钮'},
@@ -1317,7 +1365,7 @@ $('#gradeRow').addEventListener('click',e=>{
   state.pubGrade=g.dataset.g;renderUpload();
 });
 $('#pubSubmit').addEventListener('click',()=>{
-  if(!state.me){toast('请先登录');showView('login');return;}
+  if(!state.me){toast('请稍等，正在准备账号…');if(GUEST_MODE)autoGuest();else showView('login');return;}
   const price=parseFloat($('#pubPrice').value);
   if(!pubImgs.length){toast('至少上传一张照片哦 📷');return;}
   if(isNaN(price)||price<=0){toast('请填写正确的价格');$('#pubPrice').focus();return;}
