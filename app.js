@@ -357,7 +357,14 @@ $$('[data-back]').forEach(b=>b.addEventListener('click',()=>{
 if(GUEST_MODE){
   const hint=document.querySelector('#view-splash .tap-hint');
   if(hint)hint.textContent='正在为你准备账号…';
-  $('#view-splash').addEventListener('click',()=>{if(!state.me)autoGuest();});
+  /* 隐藏入口：连续点击开屏 5 次可回到原登录页（供老账号/管理员使用） */
+  let tapN=0,tapT=0;
+  $('#view-splash').addEventListener('click',()=>{
+    const now=Date.now();
+    tapN=(now-tapT<1200)?tapN+1:1;tapT=now;
+    if(tapN>=5){tapN=0;showView('login');return;}
+    if(!state.me)setTimeout(()=>{if(state.view==='splash'&&!state.me)autoGuest();},700);
+  });
   setTimeout(()=>{if(state.view==='splash'&&!state.me)autoGuest();},1500);
 }else{
   $('#view-splash').addEventListener('click',()=>showView(state.me?'home':'login'));
