@@ -383,6 +383,9 @@ async function doLogin(){
 }
 function afterLogin(){
   heartbeat();
+  /* 登录成功后再触发一次跨节点取数：聊天/档案需要登录才能接收，
+     手动登录往往晚于打开页面时的取数窗口，这里补一次（消息按 id/ts 幂等） */
+  setTimeout(()=>{if(mq&&mq.connected)collectRetained();},600);
   const perUser=getStore('data_'+state.me.name)||{};
   state.favs=new Set(perUser.favs||[]);
   state.history=perUser.history||[];
@@ -893,9 +896,10 @@ function renderProfile(){
   $('#moReply').textContent=ar?(ar<60000?Math.max(1,Math.round(ar/1000))+' 秒':Math.round(ar/60000)+' 分钟'):'–';
 }
 /* ---------- 版本公告 ---------- */
-const APP_VERSION='v4.5';
+const APP_VERSION='v4.6';
 const CHANGELOG=[
-  {v:'v4.5',d:'11-19',cur:true,t:'跨节点数据同步：所有数据镜像写入三个总线节点，历史数据不因连接节点切换而丢失'},
+  {v:'v4.6',d:'11-19',cur:true,t:'历史数据恢复：商品/聊天跨节点补齐，登录后自动再取一次历史消息'},
+  {v:'v4.5',d:'11-19',t:'跨节点数据同步：所有数据镜像写入三个总线节点，历史数据不因连接节点切换而丢失'},
   {v:'v4.4',d:'11-18',t:'聊天新增闲鹅表情包（5 款）；移除遮挡按键的 Open Sandbox 悬浮按钮'},
   {v:'v4.3',d:'11-18',t:'连接提速：三个总线节点并行竞速，自动采用最快连上的节点'},
   {v:'v4.2',d:'11-18',t:'多总线节点自动切换：主节点连不上时自动启用备用节点，市集数据自动补种'},
