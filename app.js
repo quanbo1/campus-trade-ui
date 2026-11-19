@@ -5,6 +5,8 @@
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
 const NS='campus2nd_v1/';
+/* 访客模式开关：true=隐藏登录页，自动分配 1~10 号账号；false=还原正常登录 */
+const GUEST_MODE=true;
 const SEED_USERS=['爱整理的小周','数码 scavenger','早睡冠军','衣柜断舍离','上岸学长'];
 const SEED_PASS='123456';
 const SEED_PRODUCTS=[
@@ -1002,8 +1004,6 @@ function renderProfile(){
 }
 /* ---------- 版本公告 ---------- */
 const APP_VERSION='v4.8';
-/* 访客模式开关：true=隐藏登录页，自动分配 1~10 号账号；false=还原正常登录 */
-const GUEST_MODE=true;
 const CHANGELOG=[
   {v:'v4.8',d:'11-19',cur:true,t:'访客模式：打开即用，自动分配 1~10 号体验账号，无需注册登录'},
   {v:'v4.7',d:'11-19',t:'商品多图滑动浏览；买卖双方快捷语区分；聊天时间分隔（10 分钟规则）；全新闲鹅开屏图标'},
