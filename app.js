@@ -327,8 +327,10 @@ function waitNet(ms=3000){
   });
 }
 
-/* ---------- 路由 ---------- */
-function showView(v){
+/* ---------- 路由（带历史栈：返回按钮回到上一步） ---------- */
+let navStack=[];
+function showView(v,push=true){
+  if(push&&state.view&&state.view!==v){navStack.push(state.view);if(navStack.length>40)navStack.shift();}
   state.view=v;
   $$('.view').forEach(el=>el.classList.remove('active'));
   $('#view-'+v).classList.add('active');
@@ -349,9 +351,12 @@ function showView(v){
   const sc=$('#view-'+v).querySelector('.home-body,.chat-area,.detail-body,.me-body,.order-scroll,.pub-body');
   if(sc)sc.scrollTop=0;
 }
-$$('[data-back]').forEach(b=>b.addEventListener('click',()=>{
-  showView(['detail','chat','msgs','changelog'].includes(state.view)?'home':'profile');
-}));
+function goBack(){
+  let prev=null;
+  while(navStack.length){const p=navStack.pop();if(p!==state.view){prev=p;break;}}
+  showView(prev||'home',false);
+}
+$$('[data-back]').forEach(b=>b.addEventListener('click',goBack));
 
 /* ---------- 启动页 ---------- */
 if(GUEST_MODE){
@@ -404,9 +409,10 @@ function guestLogin(name,passHash,tip){
   if(!passHash)return;
   state.me={name,pass:passHash};
   setStore('me',state.me);
+  navStack=[];
   if(tip)toast(tip+' 🦢');
   afterLogin();
-  showView('home');
+  showView('home',false);
 }
 
 /* ---------- 登录 ---------- */
@@ -433,8 +439,9 @@ async function doLogin(){
   setStore('me',state.me);
   err.textContent='';
   toast('欢迎你，'+name+' 🎉');
+  navStack=[];
   afterLogin();
-  showView('home');
+  showView('home',false);
 }
 function afterLogin(){
   heartbeat();
@@ -696,7 +703,7 @@ function renderDetail(){
   const imgs=(p.imgs&&p.imgs.length)?p.imgs:(p.img?[p.img]:[]);
   $('#dEmoji').style.display=imgs.length?'none':'';
   $('#dEmoji').textContent=p.emoji||'📦';
-  [' .d-carousel','.d-dots','.d-count'].forEach(sel=>{const el=$('#dImg'+sel);if(el)el.remove();});
+  [' .d-carousel','.d-dots','.d-count','.d-arrow.left','.d-arrow.right'].forEach(sel=>{const el=$('#dImg'+sel);if(el)el.remove();});
   const oldImg=$('#dImg img');if(oldImg)oldImg.remove();
   if(imgs.length){
     const car=document.createElement('div');
@@ -704,6 +711,7 @@ function renderDetail(){
     car.innerHTML=imgs.map(s=>`<img src="${s}" draggable="false">`).join('');
     $('#dImg').prepend(car);
     if(imgs.length>1){
+      let idx=0;
       const cnt=document.createElement('div');
       cnt.className='d-count';cnt.textContent='1/'+imgs.length;
       $('#dImg').appendChild(cnt);
@@ -711,8 +719,23 @@ function renderDetail(){
       dots.className='d-dots';
       dots.innerHTML=imgs.map((_,i)=>`<i class="${i===0?'on':''}"></i>`).join('');
       $('#dImg').appendChild(dots);
+      /* 左右箭头：点按切换，配合手势滑动 */
+      const go=n=>{
+        idx=Math.max(0,Math.min(imgs.length-1,n));
+        car.scrollTo({left:idx*car.clientWidth,behavior:'smooth'});
+        cnt.textContent=(idx+1)+'/'+imgs.length;
+        [...dots.children].forEach((d,i)=>d.classList.toggle('on',i===idx));
+      };
+      const al=document.createElement('div');
+      al.className='d-arrow left';al.textContent='‹';
+      al.addEventListener('click',e=>{e.stopPropagation();go(idx-1);});
+      const ar=document.createElement('div');
+      ar.className='d-arrow right';ar.textContent='›';
+      ar.addEventListener('click',e=>{e.stopPropagation();go(idx+1);});
+      $('#dImg').appendChild(al);
+      $('#dImg').appendChild(ar);
       car.addEventListener('scroll',()=>{
-        const idx=Math.max(0,Math.min(imgs.length-1,Math.round(car.scrollLeft/Math.max(1,car.clientWidth))));
+        idx=Math.max(0,Math.min(imgs.length-1,Math.round(car.scrollLeft/Math.max(1,car.clientWidth))));
         cnt.textContent=(idx+1)+'/'+imgs.length;
         [...dots.children].forEach((d,i)=>d.classList.toggle('on',i===idx));
       },{passive:true});
@@ -1012,7 +1035,8 @@ function renderProfile(){
 /* ---------- 版本公告 ---------- */
 const APP_VERSION='v4.8';
 const CHANGELOG=[
-  {v:'v4.8',d:'11-19',cur:true,t:'访客模式：打开即用，自动分配 1~10 号体验账号，无需注册登录'},
+  {v:'v4.9',d:'11-19',cur:true,t:'返回按钮全面升级为"回到上一步"；商品多图新增左右点按箭头'},
+  {v:'v4.8',d:'11-19',t:'访客模式：打开即用，自动分配 1~10 号体验账号，无需注册登录'},
   {v:'v4.7',d:'11-19',t:'商品多图滑动浏览；买卖双方快捷语区分；聊天时间分隔（10 分钟规则）；全新闲鹅开屏图标'},
   {v:'v4.6',d:'11-19',t:'历史数据恢复：商品/聊天跨节点补齐，登录后自动再取一次历史消息'},
   {v:'v4.5',d:'11-19',t:'跨节点数据同步：所有数据镜像写入三个总线节点，历史数据不因连接节点切换而丢失'},
@@ -1398,7 +1422,8 @@ $('#pubSubmit').addEventListener('click',()=>{
     toast('发布成功！已上架到共享市集 🎉');
     resetPublish();
     state.filter={kw:'',mine:false,tags:[]};
-    showView('home');
+    navStack=navStack.filter(x=>x!=='publish');
+    showView('home',false);
   }
 });
 
