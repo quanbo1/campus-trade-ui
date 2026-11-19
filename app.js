@@ -135,14 +135,65 @@ function pub(topic,obj,retain=false){
     return false;
   }
   mq.publish(topic,payload,{qos:0,retain});
+  mirrorPublish(topic,payload,retain);
   return true;
 }
 function flushOutbox(){
   if(!mq||!mq.connected)return;
   while(outbox.length){
     const o=outbox.shift();
-    try{mq.publish(o.topic,o.payload,{qos:0,retain:o.retain});}catch(e){outbox.unshift(o);break;}
+    try{
+      mq.publish(o.topic,o.payload,{qos:0,retain:o.retain});
+      mirrorPublish(o.topic,o.payload,o.retain);
+    }catch(e){outbox.unshift(o);break;}
   }
+}
+/* ---------- 镜像节点：所有保留消息同步写入三个总线节点，数据不再依赖单一节点 ---------- */
+let mirrors=[];
+function mirrorPublish(topic,payload,retain){
+  mirrors.forEach(m=>{
+    if(m.c&&m.c.connected){
+      try{m.c.publish(topic,payload,{qos:0,retain});}catch(e){if(retain&&m.out.length<300)m.out.push({topic,payload,retain:true});}
+    }else if(retain&&m.out.length<300)m.out.push({topic,payload,retain:true});
+  });
+}
+function flushMirror(m){
+  if(!m.c||!m.c.connected)return;
+  while(m.out.length){
+    const o=m.out.shift();
+    try{m.c.publish(o.topic,o.payload,{qos:0,retain:o.retain});}catch(e){m.out.unshift(o);break;}
+  }
+}
+function syncMirrors(){
+  const stale=mirrors.find(m=>m.idx===brokerIdx);
+  if(stale){try{stale.c.end(true);}catch(e){}mirrors=mirrors.filter(m=>m!==stale);}
+  BROKERS.forEach((url,i)=>{
+    if(i===brokerIdx||mirrors.some(m=>m.idx===i))return;
+    const m={idx:i,c:null,out:[]};
+    const c=mqtt.connect(url,{clientId:'cum_'+Math.random().toString(16).slice(2,10),clean:true,keepalive:30,connectTimeout:8000,reconnectPeriod:5000});
+    m.c=c;
+    c.on('connect',()=>flushMirror(m));
+    c.on('error',()=>{});
+    mirrors.push(m);
+  });
+}
+/* 跨节点取数：主节点切换后，从其他节点把历史保留消息拉回来（一次性临时连接） */
+let lastPrimary=-1,syncQuietUntil=0;
+function collectRetained(){
+  const topics=[NS+'users/+',NS+'products/+',NS+'orders/+',NS+'presence/+',NS+'chat/+/+',NS+'archive/+',NS+'posts/+',NS+'postcmt/+/+',NS+'postmark/+/+'];
+  BROKERS.forEach((url,i)=>{
+    if(i===brokerIdx)return;
+    const c=mqtt.connect(url,{clientId:'cuc_'+Math.random().toString(16).slice(2,10),clean:true,keepalive:15,connectTimeout:8000});
+    c.on('connect',()=>{try{c.subscribe(topics);}catch(e){}});
+    c.on('message',(t,p,packet)=>{
+      /* 只取保留消息（历史数据），实时消息由主连接负责 */
+      if(!packet||!packet.retain)return;
+      try{onMqMsg(t,p);}catch(e){}
+    });
+    c.on('error',()=>{});
+    setTimeout(()=>{try{c.end(true);}catch(e){}},7000);
+  });
+  syncQuietUntil=Date.now()+8000;
 }
 window.addEventListener('online',()=>{
   setNetUI(false,'重连中…');
@@ -154,6 +205,7 @@ function onNetUp(){
   chatSubTopic=null;
   mq.subscribe([NS+'users/+',NS+'products/+',NS+'orders/+',NS+'presence/+',NS+'chat/+/+',NS+'archive/+',NS+'posts/+',NS+'postcmt/+/+',NS+'postmark/+/+']);
   flushOutbox();
+  if(lastPrimary!==brokerIdx){lastPrimary=brokerIdx;syncMirrors();collectRetained();}
   chatSyncUntil=Date.now()+3000;
   const saved=getStore('me');
   if(saved&&saved.name){state.me=saved;afterLogin();if(state.view==='splash')showView('home');}
@@ -205,7 +257,7 @@ function onMqMsg(topic,payload){
     const i=state.orders.findIndex(o=>o.id===data.id);
     if(i>=0)state.orders[i]=data;else state.orders.push(data);
     state.orders.sort((a,b)=>b.ts-a.ts);
-    if(isNew&&data.seller===state.me.name&&data.buyer!==state.me.name)toast('你有新订单 🧾');
+    if(isNew&&Date.now()>syncQuietUntil&&data.seller===state.me.name&&data.buyer!==state.me.name)toast('你有新订单 🧾');
     if(state.view==='order')renderOrder();
     if(state.view==='profile')renderProfile();
   }else if(path.startsWith('chat/')){
@@ -374,7 +426,12 @@ function slimLog(){
 }
 function publishArchive(){
   if(!state.me||!mq||!mq.connected)return;
-  try{mq.publish(NS+'archive/'+encodeURIComponent(state.me.name),JSON.stringify({log:slimLog(),ts:Date.now()}),{qos:0,retain:true});}catch(e){}
+  try{
+    const t=NS+'archive/'+encodeURIComponent(state.me.name);
+    const pl=JSON.stringify({log:slimLog(),ts:Date.now()});
+    mq.publish(t,pl,{qos:0,retain:true});
+    mirrorPublish(t,pl,true);
+  }catch(e){}
 }
 /* 在线行为统计：每分钟累计在线时长与活跃小时 */
 setInterval(()=>{
@@ -744,7 +801,7 @@ function sendChat(text,img){
   }
   const topic=NS+'chat/'+pairId(state.me.name,state.currentPeer)+'/'+msg.ts;
   const payload=JSON.stringify(msg);
-  if(mq&&mq.connected)mq.publish(topic,payload,{qos:0,retain:true});
+  if(mq&&mq.connected){mq.publish(topic,payload,{qos:0,retain:true});mirrorPublish(topic,payload,true);}
   else{if(outbox.length<300)outbox.push({topic,payload,retain:true});toast('网络未连接，消息已暂存，恢复后自动送达');}
   renderChat();
   saveUserData();
@@ -836,9 +893,10 @@ function renderProfile(){
   $('#moReply').textContent=ar?(ar<60000?Math.max(1,Math.round(ar/1000))+' 秒':Math.round(ar/60000)+' 分钟'):'–';
 }
 /* ---------- 版本公告 ---------- */
-const APP_VERSION='v4.4';
+const APP_VERSION='v4.5';
 const CHANGELOG=[
-  {v:'v4.4',d:'11-18',cur:true,t:'聊天新增闲鹅表情包（5 款）；移除遮挡按键的 Open Sandbox 悬浮按钮'},
+  {v:'v4.5',d:'11-19',cur:true,t:'跨节点数据同步：所有数据镜像写入三个总线节点，历史数据不因连接节点切换而丢失'},
+  {v:'v4.4',d:'11-18',t:'聊天新增闲鹅表情包（5 款）；移除遮挡按键的 Open Sandbox 悬浮按钮'},
   {v:'v4.3',d:'11-18',t:'连接提速：三个总线节点并行竞速，自动采用最快连上的节点'},
   {v:'v4.2',d:'11-18',t:'多总线节点自动切换：主节点连不上时自动启用备用节点，市集数据自动补种'},
   {v:'v4.1',d:'11-18',t:'连接稳定性优化：断线自动重连、消息暂存补发、登录等待更耐心'},
@@ -913,6 +971,7 @@ $('#plazaList').addEventListener('click',e=>{
     if(!mq||!mq.connected){toast('网络未连接');return;}
     const c={author:state.me.name,text,ts:Date.now()};
     mq.publish(NS+'postcmt/'+pid+'/'+c.ts,JSON.stringify(c),{qos:0,retain:true});
+    mirrorPublish(NS+'postcmt/'+pid+'/'+c.ts,JSON.stringify(c),true);
     const arr=state.postCmts[pid]=state.postCmts[pid]||[];
     if(!arr.some(x=>x.ts===c.ts))arr.push(c);
     input.value='';
@@ -932,7 +991,7 @@ $('#plazaList').addEventListener('click',e=>{
   const set=kind==='fav'?state.myFavs:state.myLikes;
   const on=!set.has(pid);
   if(on)set.add(pid);else set.delete(pid);
-  if(mq&&mq.connected)mq.publish(NS+'postmark/'+pid+'/'+encodeURIComponent(state.me.name)+'_'+kind,JSON.stringify({on,ts:Date.now()}),{qos:0,retain:true});
+  if(mq&&mq.connected){const mt=NS+'postmark/'+pid+'/'+encodeURIComponent(state.me.name)+'_'+kind;const mp=JSON.stringify({on,ts:Date.now()});mq.publish(mt,mp,{qos:0,retain:true});mirrorPublish(mt,mp,true);}
   saveUserData();
   renderPlaza();
   toast(kind==='fav'?(on?'已收藏帖子 ⭐':'已取消收藏'):(on?'点赞成功 ❤️':'已取消点赞'));
