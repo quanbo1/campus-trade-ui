@@ -446,3 +446,21 @@ svg.ic{stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;strok
 .stk-msg{width:120px;height:120px;border-radius:12px;display:block;object-fit:cover;}
 /* 隐藏 CodeSandbox 注入的 Open Sandbox 悬浮按钮 */
 iframe[id^="sb__open-sandbox"],a[href^="https://codesandbox.io/s/"]{display:none !important;visibility:hidden !important;pointer-events:none !important;}
+/* ========== 品牌图标（闲鹅） ========== */
+.logo-circle,.login-logo{overflow:hidden;}
+.logo-circle img,.login-logo img{width:100%;height:100%;display:block;object-fit:cover;}
+/* ========== 商品多图轮播 ========== */
+.d-carousel{position:absolute;inset:0;display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;z-index:1;}
+.d-carousel::-webkit-scrollbar{display:none;}
+.d-carousel img{flex:0 0 100%;width:100%;height:100%;object-fit:cover;scroll-snap-align:center;display:block;}
+.d-count{position:absolute;right:12px;bottom:12px;z-index:3;background:rgba(60,45,30,.5);color:#fff;font-size:10.5px;padding:3px 9px;border-radius:12px;backdrop-filter:blur(4px);letter-spacing:.5px;}
+.d-dots{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;z-index:3;display:flex;gap:6px;}
+.d-dots i{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.6);transition:.2s;}
+.d-dots i.on{background:#fff;width:16px;border-radius:3px;}
+.detail-img .toolrow{z-index:4;}
+/* ========== 聊天时间分隔（微信规则） ========== */
+.chat-time{display:flex;justify-content:center;margin:12px 0 8px;}
+.chat-time span{font-size:10.5px;color:#9C8E78;background:rgba(180,158,124,.16);padding:3px 10px;border-radius:10px;letter-spacing:.3px;}
+/* 快捷语可换行 */
+.quick-row{flex-wrap:wrap;}
+.detail-img{overflow:hidden;}

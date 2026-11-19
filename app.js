@@ -215,11 +215,12 @@ function onNetUp(){
     if(state.products.length===0&&!localStorage.getItem(seedKey)){
       localStorage.setItem(seedKey,'1');
       hash(SEED_PASS).then(h=>{
-        SEED_USERS.forEach(u=>pub(NS+'users/'+encodeURIComponent(u),{pass:h,ts:Date.now()},true));
-        SEED_PRODUCTS.forEach(p=>pub(NS+'products/'+p.id,{...p,ts:Date.now()},true));
+        /* 只补缺失的演示数据，已存在的账号/商品绝不覆盖（保护真实数据） */
+        SEED_USERS.forEach(u=>{if(!state.users[u])pub(NS+'users/'+encodeURIComponent(u),{pass:h,ts:Date.now()},true);});
+        SEED_PRODUCTS.forEach(p=>{if(!state.products.some(x=>x.id===p.id))pub(NS+'products/'+p.id,{...p,ts:Date.now()},true);});
       });
     }
-  },1800);
+  },3200);
   heartbeat();
 }
 function heartbeat(){if(state.me&&mq&&mq.connected)pub(NS+'presence/'+encodeURIComponent(state.me.name),{on:true,ts:Date.now()},true);}
@@ -412,7 +413,7 @@ function saveUserData(){
   if(!state.me)return;
   const slimLog={};
   Object.entries(state.chatLog).forEach(([k,v])=>{
-    slimLog[k]=v.filter(m=>m.text||(m.img&&m.img.indexOf('stk#')===0)).slice(-50).map(m=>({from:m.from,to:m.to,text:m.text||'',img:m.img||null,ts:m.ts}));
+    slimLog[k]=v.filter(m=>m.text||(m.img&&m.img.indexOf('stk#')===0)).slice(-150).map(m=>({from:m.from,to:m.to,text:m.text||'',img:m.img||null,ts:m.ts}));
   });
   setStore('data_'+state.me.name,{favs:[...state.favs],history:state.history,unread:state.unread,prefs:state.prefs,chatProducts:state.chatProducts,chatLog:slimLog,activity:state.activity,myLikes:[...state.myLikes],myFavs:[...state.myFavs]});
 }
@@ -423,7 +424,7 @@ function scheduleArchive(){clearTimeout(archiveTimer);archiveTimer=setTimeout(pu
 function slimLog(){
   const out={};
   Object.entries(state.chatLog).forEach(([k,v])=>{
-    out[k]=v.filter(m=>m.text||(m.img&&m.img.indexOf('stk#')===0)).slice(-80).map(m=>({from:m.from,to:m.to,text:m.text||'',img:m.img||null,ts:m.ts}));
+    out[k]=v.filter(m=>m.text||(m.img&&m.img.indexOf('stk#')===0)).slice(-120).map(m=>({from:m.from,to:m.to,text:m.text||'',img:m.img||null,ts:m.ts}));
   });
   return out;
 }
@@ -638,10 +639,31 @@ function renderDetailOwnerState(){
 }
 function renderDetail(){
   const p=curP();if(!p)return;
-  $('#dEmoji').style.display=p.img?'none':'';
+  const imgs=(p.imgs&&p.imgs.length)?p.imgs:(p.img?[p.img]:[]);
+  $('#dEmoji').style.display=imgs.length?'none':'';
   $('#dEmoji').textContent=p.emoji||'📦';
+  [' .d-carousel','.d-dots','.d-count'].forEach(sel=>{const el=$('#dImg'+sel);if(el)el.remove();});
   const oldImg=$('#dImg img');if(oldImg)oldImg.remove();
-  if(p.img){const im=document.createElement('img');im.src=p.img;$('#dImg').prepend(im);}
+  if(imgs.length){
+    const car=document.createElement('div');
+    car.className='d-carousel';
+    car.innerHTML=imgs.map(s=>`<img src="${s}" draggable="false">`).join('');
+    $('#dImg').prepend(car);
+    if(imgs.length>1){
+      const cnt=document.createElement('div');
+      cnt.className='d-count';cnt.textContent='1/'+imgs.length;
+      $('#dImg').appendChild(cnt);
+      const dots=document.createElement('div');
+      dots.className='d-dots';
+      dots.innerHTML=imgs.map((_,i)=>`<i class="${i===0?'on':''}"></i>`).join('');
+      $('#dImg').appendChild(dots);
+      car.addEventListener('scroll',()=>{
+        const idx=Math.max(0,Math.min(imgs.length-1,Math.round(car.scrollLeft/Math.max(1,car.clientWidth))));
+        cnt.textContent=(idx+1)+'/'+imgs.length;
+        [...dots.children].forEach((d,i)=>d.classList.toggle('on',i===idx));
+      },{passive:true});
+    }
+  }
   $('#dPrice').innerHTML=`<small>¥</small>${Number(p.price).toFixed(2)}`;
   $('#dTitle').textContent=p.name;
   $('#dMeta').innerHTML=`<span class="chip">${CAT_MAP[p.cat]||p.cat}${p.sub?' · '+p.sub:''}</span><span class="chip">${p.cond}</span><span class="chip orange">校内面交</span>${p.sold?'<span class="chip">已售出</span>':''}`;
@@ -768,23 +790,61 @@ $('#stkPanel').addEventListener('click',e=>{
   $('#stkPanel').classList.remove('show');
   $('#stkBtn').classList.remove('on');
 });
+/* ---------- 买卖身份与快捷语 ---------- */
+const QUICK_BUYER=['这个还在吗？','可以便宜一点吗？','我想当面验货','什么时候方便面交？'];
+const QUICK_SELLER=['在的，随时可以看','已经是实价啦','支持当面验货','东门驿站自提方便吗？'];
+function chatRole(){
+  const peer=state.currentPeer;
+  if(!peer||!state.me)return 'buyer';
+  const pid=state.chatProducts[peer];
+  const p=pid?state.products.find(x=>x.id===pid):null;
+  if(p&&p.owner===state.me.name)return 'seller';
+  if(p)return 'buyer';
+  const o=state.orders.find(o=>(o.seller===state.me.name&&o.buyer===peer)||(o.buyer===state.me.name&&o.seller===peer));
+  if(o)return o.seller===state.me.name?'seller':'buyer';
+  return 'buyer';
+}
+function renderQuick(){
+  const role=chatRole();
+  const box=$('#quickRow');
+  if(!box)return;
+  box.innerHTML=(role==='seller'?QUICK_SELLER:QUICK_BUYER).map(t=>`<span class="quick">${t}</span>`).join('');
+}
 function renderChatHead(){
   const on=isOnline(state.currentPeer);
   $('#cPeer').textContent=state.currentPeer;
-  $('#cPeerSub').innerHTML=`<span class="${on?'dot-on':'dot-off'}"></span> ${on?'在线 · 消息实时送达':'离线 · 消息会在对方上线后送达'}`;
+  const role=chatRole();
+  $('#cPeerSub').innerHTML=`<span class="${on?'dot-on':'dot-off'}"></span> ${on?'在线 · 消息实时送达':'离线 · 消息会在对方上线后送达'} · <b style="color:#A9803F;">你是${role==='seller'?'卖家':'买家'}</b>`;
+}
+/* 聊天时间格式化：今天 HH:MM / 昨天 HH:MM / M月D日 HH:MM */
+function fmtChatTime(ts){
+  const d=new Date(ts),now=new Date();
+  const hm=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  if(d.toDateString()===now.toDateString())return hm;
+  const y=new Date(now);y.setDate(now.getDate()-1);
+  if(d.toDateString()===y.toDateString())return '昨天 '+hm;
+  if(d.getFullYear()===now.getFullYear())return (d.getMonth()+1)+'月'+d.getDate()+'日 '+hm;
+  return d.getFullYear()+'年'+(d.getMonth()+1)+'月'+d.getDate()+'日 '+hm;
 }
 function renderChat(){
   if(!state.currentPeer)return;
   renderChatHead();
+  renderQuick();
   const area=$('#chatArea');
   const log=(state.chatLog[state.currentPeer]||[]).filter(m=>m.text||m.img);
   if(!log.length){area.innerHTML=`<div class="chat-empty">🙋 和 ${state.currentPeer} 打个招呼吧<br>对方上线后就能收到你的消息</div>`;return;}
+  /* 微信式时间：与上一条间隔 >10 分钟才显示 */
+  const GAP=10*60*1000;
+  let prevTs=0;
   area.innerHTML=log.map(m=>{
     const mine=m.from===state.me.name;
     const av=mine?`<div class="avatar me">${state.me.name[0]}</div>`:`<div class="avatar">${state.currentPeer[0]}</div>`;
     const stk=m.img&&m.img.indexOf('stk#')===0?STK_MAP[m.img]:null;
     const body=`<div class="bubble">${stk?`<img class="stk-msg" src="${stk.src}" alt="${stk.name}" style="margin-bottom:${m.text?'8px':'0'};">`:(m.img?`<img src="${m.img}" style="width:150px;border-radius:10px;display:block;margin-bottom:${m.text?'8px':'0'};">`:'')}${m.text||''}</div>`;
-    return `<div class="msg ${mine?'right':'left'}">${av}${body}</div>`;
+    let timeHtml='';
+    if(!prevTs||(m.ts-prevTs)>GAP)timeHtml=`<div class="chat-time"><span>${fmtChatTime(m.ts)}</span></div>`;
+    prevTs=m.ts;
+    return timeHtml+`<div class="msg ${mine?'right':'left'}">${av}${body}</div>`;
   }).join('');
   area.scrollTop=area.scrollHeight;
   if(state.unread[state.currentPeer]){state.unread[state.currentPeer]=0;updateUnread();saveUserData();}
@@ -896,9 +956,10 @@ function renderProfile(){
   $('#moReply').textContent=ar?(ar<60000?Math.max(1,Math.round(ar/1000))+' 秒':Math.round(ar/60000)+' 分钟'):'–';
 }
 /* ---------- 版本公告 ---------- */
-const APP_VERSION='v4.6';
+const APP_VERSION='v4.7';
 const CHANGELOG=[
-  {v:'v4.6',d:'11-19',cur:true,t:'历史数据恢复：商品/聊天跨节点补齐，登录后自动再取一次历史消息'},
+  {v:'v4.7',d:'11-19',cur:true,t:'商品多图滑动浏览；买卖双方快捷语区分；聊天时间分隔（10 分钟规则）；全新闲鹅开屏图标'},
+  {v:'v4.6',d:'11-19',t:'历史数据恢复：商品/聊天跨节点补齐，登录后自动再取一次历史消息'},
   {v:'v4.5',d:'11-19',t:'跨节点数据同步：所有数据镜像写入三个总线节点，历史数据不因连接节点切换而丢失'},
   {v:'v4.4',d:'11-18',t:'聊天新增闲鹅表情包（5 款）；移除遮挡按键的 Open Sandbox 悬浮按钮'},
   {v:'v4.3',d:'11-18',t:'连接提速：三个总线节点并行竞速，自动采用最快连上的节点'},
@@ -1273,7 +1334,7 @@ $('#pubSubmit').addEventListener('click',()=>{
     price,cond:state.pubGrade,cat,sub:sub||null,cut:state.pubCut,
     owner:state.me.name,
     desc:desc||'卖家很懒，没有写描述～',
-    img:pubImgs[0]||null,emoji:pubImgs[0]?null:'📦',
+    img:pubImgs[0]||null,imgs:pubImgs.slice(),emoji:pubImgs[0]?null:'📦',
     ts:Date.now(),sold:false,
   };
   if(JSON.stringify(p).length>700000){toast('图片过大，请换一张小图');return;}
